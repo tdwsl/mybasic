@@ -228,26 +228,29 @@ void loadFile(Program *p, const char *filename) {
 	free(s);
 }
 
+void printToken(Token t) {
+	switch(t.type) {
+	case NEWLINE:
+		printf("\n");
+		break;
+	case STRING:
+		printf("\"%s\" ", t.val.s);
+		break;
+	case SYMBOL:
+		printf("%s ", t.val.s);
+		break;
+	case KEYWORD:
+		printf("%s ", t.val.cs);
+		break;
+	case INTEGER:
+		printf("%d ", t.val.i);
+		break;
+	}
+}
+
 void printProgram(Program *p) {
 	for(int i = 0; i < p->num_tokens; i++) {
-		Token t = p->tokens[i];
-		switch(t.type) {
-		case NEWLINE:
-			printf("\n");
-			break;
-		case STRING:
-			printf("\"%s\" ", t.val.s);
-			break;
-		case SYMBOL:
-			printf("%s ", t.val.s);
-			break;
-		case KEYWORD:
-			printf("%s ", t.val.cs);
-			break;
-		case INTEGER:
-			printf("%d ", t.val.i);
-			break;
-		}
+		printToken(p->tokens[i]);
 	}
 	printf("\n");
 }
@@ -307,11 +310,11 @@ void checkOperators(Token *tokens, int n,
 		Token **operands, int *num_operands,
 		Token **operators, int *num_operators)
 {
-	checkOperator(tokens, n, "=", operands, num_operands, operators, num_operators);
 	checkOperator(tokens, n, "/", operands, num_operands, operators, num_operators);
 	checkOperator(tokens, n, "*", operands, num_operands, operators, num_operators);
 	checkOperator(tokens, n, "+", operands, num_operands, operators, num_operators);
 	checkOperator(tokens, n, "-", operands, num_operands, operators, num_operators);
+	checkOperator(tokens, n, "=", operands, num_operands, operators, num_operators);
 }
 
 Token evalExpression(Token *otokens, int n) {
@@ -348,9 +351,9 @@ Token evalExpression(Token *otokens, int n) {
 	checkOperators(tokens, n, &operands, &num_operands, &operators, &num_operators);
 
 	for(int i = 0; i < num_operands; i++)
-		printf("%d ", operands[i].val.i);
+		printToken(operands[i]);
 	for(int i = 0; i < num_operators; i++)
-		printf("%s ", operators[i].val.cs);
+		printToken(operators[i]);
 
 	exit(1);
 
@@ -376,7 +379,7 @@ void runProgram(Program *p) {
 int main() {
 	Program *p = newProgram();
 	/*loadFile(p, "test.bas");*/
-	loadString(p, "print 10 * (5 - 2)");
+	loadString(p, "print i = 10 * (5 - 2)");
 	printProgram(p);
 	runProgram(p);
 	freeProgram(p);
