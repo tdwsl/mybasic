@@ -9,6 +9,7 @@ enum {
 	SYMBOL,
 	NEWLINE,
 	KEYWORD,
+	INTEGER,
 };
 
 const char *keywords[] = {
@@ -79,6 +80,16 @@ void addToken(Program *p, Token t) {
 				break;
 			}
 		}
+
+		/*bool is_i = t.type != KEYWORD;
+		for(char *c = t.val.s; *c != 0 && is_i; c++)
+			if(*c <  '0' || *c > '9')
+				is_i = false;
+		if(is_i) {
+			t.val.i = atoi(t.val.s);
+			free(t.val.s);
+			t.type = INTEGER;
+		}*/
 	}
 
 	p->tokens[p->num_tokens-1] = t;
@@ -229,6 +240,9 @@ void printProgram(Program *p) {
 		case KEYWORD:
 			printf("%s ", t.val.cs);
 			break;
+		case INTEGER:
+			printf("%d ", t.val.i);
+			break;
 		}
 	}
 	printf("\n");
@@ -241,15 +255,126 @@ int lineLength(Program *p, int d) {
 	return (p->num_tokens-d);
 }
 
+void checkOperator(Token *tokens, int n, const char *s,
+		Token **operands, int *num_operands,
+		Token **operators, int *num_operators)
+{
+	int depth = 0;
+
+	for(int i = 0; i < n; i++) {
+		if(tokens[i].type != KEYWORD)
+			continue;
+
+		if(strcmp(tokens[i].val.cs, "(") == 0)
+			depth++;
+		else if(strcmp(tokens[i].val.cs, ")") == 0)
+			depth--;
+		if(depth)
+			continue;
+
+		if(strcmp(tokens[i].val.s, s) == 0) {
+			*num_operators += 1;
+			*operators = realloc(*operators, sizeof(Token)*(*num_operators));
+
+			(*operators)[(*num_operators)-1] = tokens[i];
+
+			if(tokens[i-1].type != KEYWORD) {
+				*num_operands += 1;
+				*operands = realloc(*operands, sizeof(Token)*(*num_operands));
+				(*operands)[(*num_operands)-1] = tokens[i-1];
+			}
+			if(tokens[i+1].type != KEYWORD) {
+				*num_operands += 1;
+				*operands = realloc(*operands, sizeof(Token)*(*num_operands));
+				(*operands)[(*num_operands)-1] = tokens[i+1];
+			}
+
+			Token t;
+			t.type = KEYWORD;
+			t.val.cs = "(";
+			tokens[i-1] = t;
+			t.val.cs = ")";
+			tokens[i+1] = t;
+		}
+	}
+}
+
+void checkOperators(Token *tokens, int n,
+		Token **operands, int *num_operands,
+		Token **operators, int *num_operators)
+{
+	checkOperator(tokens, n, "=", operands, num_operands, operators, num_operators);
+	checkOperator(tokens, n, "/", operands, num_operands, operators, num_operators);
+	checkOperator(tokens, n, "*", operands, num_operands, operators, num_operators);
+	checkOperator(tokens, n, "+", operands, num_operands, operators, num_operators);
+	checkOperator(tokens, n, "-", operands, num_operands, operators, num_operators);
+}
+
+Token evalExpression(Token *otokens, int n) {
+	int depth = 0, bopen_max = 20;
+	int *bopen = malloc(sizeof(int)*bopen_max);
+
+	Token *tokens = malloc(sizeof(Token)*n);
+	for(int i = 0; i < n; i++)
+		tokens[i] = otokens[i];
+
+	Token *operands = 0;
+	int num_operands = 0;
+	Token *operators = 0;
+	int num_operators = 0;
+
+	for(int i = 0; i < n; i++) {
+		if(tokens[i].type != KEYWORD)
+			continue;
+
+		if(strcmp(tokens[i].val.cs, "(") == 0)
+			bopen[depth++] = i;
+		else if(strcmp(tokens[i].val.cs, ")") == 0) {
+			int open = bopen[--depth];
+			Token *tkns = tokens+open+1;
+			int n = i-open-1;
+			checkOperators(tkns, n, &operands, &num_operands, &operators, &num_operators);
+		}
+
+		if(depth > bopen_max-10) {
+			bopen_max += 20;
+			bopen = realloc(bopen, sizeof(int)*bopen_max);
+		}
+	}
+	checkOperators(tokens, n, &operands, &num_operands, &operators, &num_operators);
+
+	for(int i = 0; i < num_operands; i++)
+		printf("%s ", operands[i].val.s);
+	for(int i = 0; i < num_operators; i++)
+		printf("%s ", operators[i].val.cs);
+
+	exit(1);
+
+	free(bopen);
+	free(tokens);
+	free(operands);
+	free(operators);
+}
+
+void runLine(Program *p, Token *tokens, int n) {
+	assert(tokens[0].type == KEYWORD);
+	evalExpression(tokens+1, n-1);
+}
+
 void runProgram(Program *p) {
 	for(int i = 0; i < p->num_tokens; i++) {
+		int l = lineLength(p, i);
+		runLine(p, p->tokens+i, l);
+		i += l;
 	}
 }
 
 int main() {
 	Program *p = newProgram();
-	loadFile(p, "test.bas");
+	/*loadFile(p, "test.bas");*/
+	loadString(p, "print 10 * (5 - 2)");
 	printProgram(p);
+	runProgram(p);
 	freeProgram(p);
 	return 0;
 }
