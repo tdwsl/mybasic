@@ -11,6 +11,7 @@ enum {
 	KEYWORD,
 	INTEGER,
 	COLON,
+	COMMA,
 };
 
 const char *keywords[] = {
@@ -26,7 +27,6 @@ const char *keywords[] = {
 	"*",
 	"+",
 	"-",
-	",",
 	"GOSUB",
 	"RETURN",
 	"PRINT",
@@ -50,6 +50,16 @@ typedef struct variable {
 		int i;
 	} val;
 } Variable;
+
+typedef struct line {
+	Token *tokens;
+	int num_tokens;
+} Line;
+
+typedef struct list {
+	struct line *lines;
+	int num_lines;
+} List;
 
 typedef struct program {
 	Token *tokens;
@@ -110,6 +120,10 @@ void addToken(Program *p, Token t) {
 		else if(strcmp(t.val.s, ":") == 1) {
 			free(t.val.s);
 			t.type = COLON;
+		}
+		else if(strcmp(t.val.s, ",") == 1) {
+			free(t.val.s);
+			t.type = COMMA;
 		}
 	}
 
@@ -195,6 +209,40 @@ int getIntegerVariable(Program *p, char *identifier) {
 		if(strcmp(p->integers[i].identifier, identifier) == 0)
 			return p->integers[i].val.i;
 	return 0;
+}
+
+void addListLine(List *l) {
+	l->lines = realloc(l->lines, sizeof(Line)*(++(l->num_lines)));
+	l->lines[l->num_lines-1] = (Line){0, 0};
+}
+
+void addListToken(List *l, Token t) {
+	Line *ln = &l->lines[l->num_lines-1];
+	ln->tokens = realloc(ln->tokens, (++(ln->num_tokens)));
+	ln->tokens[ln->num_tokens-1] = t;
+}
+
+void freeList(List *l) {
+	for(int i = 0; i < l->num_lines; i++)
+		free(l->lines[i].tokens);
+	free(l->lines);
+	free(l);
+}
+
+List *getList(Token *tokens, int n, int sep) {
+	List *l = malloc(sizeof(List));
+	*l = (List){0, 0};
+	addListLine(l);
+
+	for(int i = 0; i < n; i++) {
+		Token t = tokens[i];
+		if(t.type == sep)
+			addListLine(l);
+		else
+			addListToken(l, t);
+	}
+
+	return l;
 }
 
 void loadString(Program *p, char *text) {
@@ -571,6 +619,22 @@ void runLine(Program *p, Token *tokens, int n) {
 	}
 
 	assert(tokens[0].type == KEYWORD);
+
+	if(strcmp(tokens[0].val.cs, "IF") != 0) {
+		int multi = 0;
+		for(int i = 1; i < n && !multi; i++)
+			if(tokens[0].type == COLON)
+				multi = i;
+
+		if(multi) {
+			List *l = getList(tokens, n, COLON);
+			for(int i = 0; i < l->num_lines; i++)
+				runLine(p, l->lines[i].tokens, l->lines[i].num_tokens);
+			freeList(l);
+			n = multi;
+		}
+	}
+
 	Token t = evalExpression(p, tokens+1, n-1);
 	if(strcmp(tokens[0].val.cs, "PRINT") == 0)
 		printToken(t);
@@ -589,7 +653,7 @@ int main() {
 	Program *p = newProgram();
 	/*loadFile(p, "test.bas");*/
 	/*loadString(p, "i = 30\nprint i = 10 * (5 - 2)");*/
-	loadString(p, "msg$ = \"hello world\"\nprint msg$\nprint msg$+0");
+	loadString(p, "msg$ = \"hello world\" : print msg$\nprint msg$+0");
 	printProgram(p);
 	runProgram(p);
 	freeProgram(p);
