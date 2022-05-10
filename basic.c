@@ -113,7 +113,9 @@ void freeToken(Token t) {
 void freeProgram(Program *p) {
 	for(int i = 0; i < p->num_tokens; i++)
 		freeToken(p->tokens[i]);
-	free(p->tokens);
+	if(p->tokens)
+		free(p->tokens);
+
 	free(p);
 }
 
@@ -310,11 +312,64 @@ void checkOperators(Token *tokens, int n,
 		Token **operands, int *num_operands,
 		Token **operators, int *num_operators)
 {
-	checkOperator(tokens, n, "/", operands, num_operands, operators, num_operators);
-	checkOperator(tokens, n, "*", operands, num_operands, operators, num_operators);
-	checkOperator(tokens, n, "+", operands, num_operands, operators, num_operators);
-	checkOperator(tokens, n, "-", operands, num_operands, operators, num_operators);
-	checkOperator(tokens, n, "=", operands, num_operands, operators, num_operators);
+	checkOperator(tokens, n, "/", operands, num_operands,
+			operators, num_operators);
+	checkOperator(tokens, n, "*", operands, num_operands,
+			operators, num_operators);
+	checkOperator(tokens, n, "+", operands, num_operands,
+			operators, num_operators);
+	checkOperator(tokens, n, "-", operands, num_operands,
+			operators, num_operators);
+	checkOperator(tokens, n, "=", operands, num_operands,
+			operators, num_operators);
+}
+
+Token doOp(Token t1, Token t2, const char *s) {
+	Token t;
+	t.type = INTEGER;
+	assert(t1.type == INTEGER || t2.type == STRING);
+	assert(t1.type == INTEGER || t2.type == STRING);
+
+	/*printToken(t1);
+	printf("%s ", s);
+	printToken(t2);
+	printf("\n");*/
+
+	if(strcmp(s, "=") == 0) {
+		if(t1.type == STRING && t2.type == INTEGER) {
+			t1.type = INTEGER;
+			t1.val.i = strlen(t1.val.s);
+		}
+		if(t1.type == INTEGER && t2.type == STRING) {
+			t2.type = INTEGER;
+			t2.val.i = strlen(t2.val.s);
+		}
+
+		if(t1.type == STRING)
+			t.val.i = (strcmp(t1.val.s, t2.val.s) == 0);
+		else
+			t.val.i = (t1.val.i == t2.val.i);
+
+		return t;
+	}
+
+	assert(t1.type == INTEGER && t2.type == INTEGER);
+
+	if(strcmp(s, "+") == 0)
+		t.val.i = t1.val.i + t2.val.i;
+	else if(strcmp(s, "-") == 0)
+		t.val.i = t1.val.i - t2.val.i;
+	else if(strcmp(s, "/") == 0)
+		t.val.i = t1.val.i / t2.val.i;
+	else if(strcmp(s, "*") == 0)
+		t.val.i = t1.val.i * t2.val.i;
+	else {
+		t.val.i = 0;
+		printf("UNKNOWN OPERATOR\n");
+		exit(1);
+	}
+
+	return t;
 }
 
 Token evalExpression(Token *otokens, int n) {
@@ -340,7 +395,8 @@ Token evalExpression(Token *otokens, int n) {
 			int open = bopen[--depth];
 			Token *tkns = tokens+open+1;
 			int n = i-open-1;
-			checkOperators(tkns, n, &operands, &num_operands, &operators, &num_operators);
+			checkOperators(tkns, n, &operands, &num_operands,
+					&operators, &num_operators);
 		}
 
 		if(depth > bopen_max-10) {
@@ -348,24 +404,38 @@ Token evalExpression(Token *otokens, int n) {
 			bopen = realloc(bopen, sizeof(int)*bopen_max);
 		}
 	}
-	checkOperators(tokens, n, &operands, &num_operands, &operators, &num_operators);
+	checkOperators(tokens, n, &operands, &num_operands,
+			&operators, &num_operators);
 
-	for(int i = 0; i < num_operands; i++)
+	/*for(int i = 0; i < num_operands; i++)
 		printToken(operands[i]);
 	for(int i = 0; i < num_operators; i++)
 		printToken(operators[i]);
 
-	exit(1);
+	exit(1);*/
+
+	for(int i = 0; i < num_operators; i++) {
+		operands[0] = doOp(operands[0], operands[1], operators[i].val.cs);
+		num_operands--;
+		for(int j = 1; j < num_operands; j++)
+			operands[j] = operands[j+1];
+	}
+
+	Token r = operands[0];
 
 	free(bopen);
 	free(tokens);
 	free(operands);
 	free(operators);
+
+	return r;
 }
 
 void runLine(Program *p, Token *tokens, int n) {
 	assert(tokens[0].type == KEYWORD);
-	evalExpression(tokens+1, n-1);
+	Token t = evalExpression(tokens+1, n-1);
+	if(strcmp(tokens[0].val.cs, "PRINT") == 0)
+		printToken(t);
 }
 
 void runProgram(Program *p) {
@@ -379,7 +449,7 @@ void runProgram(Program *p) {
 int main() {
 	Program *p = newProgram();
 	/*loadFile(p, "test.bas");*/
-	loadString(p, "print i = 10 * (5 - 2)");
+	loadString(p, "print 30 = 10 * (5 - 2)");
 	printProgram(p);
 	runProgram(p);
 	freeProgram(p);
