@@ -10,6 +10,7 @@ enum {
 	NEWLINE,
 	KEYWORD,
 	INTEGER,
+	COLON,
 };
 
 const char *keywords[] = {
@@ -25,7 +26,6 @@ const char *keywords[] = {
 	"*",
 	"+",
 	"-",
-	":",
 	",",
 	"GOSUB",
 	"RETURN",
@@ -36,16 +36,29 @@ const char *keywords[] = {
 
 typedef struct token {
 	int type;
-	union val {
+	union {
 		char *s;
 		const char *cs;
 		int i;
 	} val;
 } Token;
 
+typedef struct variable {
+	char *identifier;
+	union {
+		char *s;
+		int i;
+	} val;
+} Variable;
+
 typedef struct program {
 	Token *tokens;
 	int num_tokens;
+	Variable *integers;
+	int num_integers;
+	Variable *strings;
+	int num_strings;
+	char *blank;
 } Program;
 
 char *addChar(char *s, int *len, int *max, char c) {
@@ -94,6 +107,10 @@ void addToken(Program *p, Token t) {
 			t.val.i = n;
 			t.type = INTEGER;
 		}
+		else if(strcmp(t.val.s, ":") == 1) {
+			free(t.val.s);
+			t.type = COLON;
+		}
 	}
 
 	p->tokens[p->num_tokens-1] = t;
@@ -101,7 +118,9 @@ void addToken(Program *p, Token t) {
 
 Program *newProgram() {
 	Program *p = malloc(sizeof(Program));
-	*p = (Program){0, 0};
+	*p = (Program){0, 0, 0, 0, 0, 0, 0};
+	p->blank = malloc(1);
+	p->blank[0] = 0;
 	return p;
 }
 
@@ -111,12 +130,71 @@ void freeToken(Token t) {
 }
 
 void freeProgram(Program *p) {
+	free(p->blank);
+
 	for(int i = 0; i < p->num_tokens; i++)
 		freeToken(p->tokens[i]);
 	if(p->tokens)
 		free(p->tokens);
 
+	for(int i = 0; i < p->num_strings; i++) {
+		free(p->strings[i].identifier);
+		free(p->strings[i].val.s);
+	}
+	if(p->strings)
+		free(p->strings);
+
+	for(int i = 0; i < p->num_integers; i++)
+		free(p->integers[i].identifier);
+	if(p->integers)
+		free(p->integers);
+
 	free(p);
+}
+
+void setStringVariable(Program *p, char *identifier, char *s) {
+	for(int i = 0; i < p->num_strings; i++)
+		if(strcmp(p->strings[i].identifier, identifier) == 0) {
+			free(p->strings[i].val.s);
+			p->strings[i].val.s = malloc(strlen(s)+1);
+			strcpy(p->strings[i].val.s, s);
+			return;
+		}
+
+	p->strings = realloc(p->strings, sizeof(Variable)*(++(p->num_strings)));
+	Variable *v = &p->strings[p->num_strings-1];
+	v->identifier = malloc(strlen(identifier)+1);
+	strcpy(v->identifier, identifier);
+	v->val.s = malloc(strlen(s)+1);
+	strcpy(v->val.s, s);
+}
+
+char *getStringVariable(Program *p, char *identifier) {
+	for(int i = 0; i < p->num_strings; i++)
+		if(strcmp(p->strings[i].identifier, identifier) == 0)
+			return p->strings[i].val.s;
+	return p->blank;
+}
+
+void setIntegerVariable(Program *p, char *identifier, int d) {
+	for(int i = 0; i < p->num_integers; i++)
+		if(strcmp(p->integers[i].identifier, identifier) == 0) {
+			p->integers[i].val.i = d;
+			return;
+		}
+
+	p->integers = realloc(p->integers, sizeof(Variable)*(++(p->num_integers)));
+	Variable *v = &p->integers[p->num_integers-1];
+	v->identifier = malloc(strlen(identifier)+1);
+	strcpy(v->identifier, identifier);
+	v->val.i = d;
+}
+
+int getIntegerVariable(Program *p, char *identifier) {
+	for(int i = 0; i < p->num_integers; i++)
+		if(strcmp(p->integers[i].identifier, identifier) == 0)
+			return p->integers[i].val.i;
+	return 0;
 }
 
 void loadString(Program *p, char *text) {
@@ -230,7 +308,7 @@ void loadFile(Program *p, const char *filename) {
 	free(s);
 }
 
-void printToken(Token t) {
+void printDebug(Token t) {
 	switch(t.type) {
 	case NEWLINE:
 		printf("\n");
@@ -250,9 +328,23 @@ void printToken(Token t) {
 	}
 }
 
+void printToken(Token t) {
+	switch(t.type) {
+	case NEWLINE:
+		printf("\n");
+		break;
+	case STRING:
+		printf("%s", t.val.s);
+		break;
+	case INTEGER:
+		printf("%d", t.val.i);
+		break;
+	}
+}
+
 void printProgram(Program *p) {
 	for(int i = 0; i < p->num_tokens; i++) {
-		printToken(p->tokens[i]);
+		printDebug(p->tokens[i]);
 	}
 	printf("\n");
 }
@@ -327,13 +419,9 @@ void checkOperators(Token *tokens, int n,
 Token doOp(Token t1, Token t2, const char *s) {
 	Token t;
 	t.type = INTEGER;
-	assert(t1.type == INTEGER || t2.type == STRING);
-	assert(t1.type == INTEGER || t2.type == STRING);
 
-	/*printToken(t1);
-	printf("%s ", s);
-	printToken(t2);
-	printf("\n");*/
+	assert(t1.type == INTEGER || t1.type == STRING);
+	assert(t2.type == INTEGER || t2.type == STRING);
 
 	if(strcmp(s, "=") == 0) {
 		if(t1.type == STRING && t2.type == INTEGER) {
@@ -351,6 +439,15 @@ Token doOp(Token t1, Token t2, const char *s) {
 			t.val.i = (t1.val.i == t2.val.i);
 
 		return t;
+	}
+
+	if(t1.type == STRING) {
+		t1.type = INTEGER;
+		t1.val.i = strlen(t1.val.s);
+	}
+	if(t2.type == STRING) {
+		t2.type = INTEGER;
+		t2.val.i = strlen(t2.val.s);
 	}
 
 	assert(t1.type == INTEGER && t2.type == INTEGER);
@@ -372,13 +469,42 @@ Token doOp(Token t1, Token t2, const char *s) {
 	return t;
 }
 
-Token evalExpression(Token *otokens, int n) {
-	int depth = 0, bopen_max = 20;
-	int *bopen = malloc(sizeof(int)*bopen_max);
+void getVariables(Program *p, Token *tokens, int n) {
+	for(int i = 0; i < n; i++)
+		if(tokens[i].type == SYMBOL) {
+			bool is_str = false;
+			if(tokens[i].val.s[0] != 0)
+				if(tokens[i].val.s[strlen(tokens[i].val.s)-1] == '$')
+					is_str = true;
+			if(is_str) {
+				tokens[i].val.s = getStringVariable(p, tokens[i].val.s);
+				tokens[i].type = STRING;
+			}
+			else {
+				tokens[i].val.i = getIntegerVariable(p, tokens[i].val.s);
+				tokens[i].type = INTEGER;
+			}
+		}
+}
 
+Token evalExpression(Program *p, Token *otokens, int n) {
 	Token *tokens = malloc(sizeof(Token)*n);
 	for(int i = 0; i < n; i++)
 		tokens[i] = otokens[i];
+
+	getVariables(p, tokens, n);
+
+	/* if only 1 part, return */
+	if(n == 1) {
+		Token t = *tokens;
+		free(tokens);
+		return t;
+	}
+
+	/* convert to rpn in two seperate arrays */
+
+	int depth = 0, bopen_max = 20;
+	int *bopen = malloc(sizeof(int)*bopen_max);
 
 	Token *operands = 0;
 	int num_operands = 0;
@@ -407,12 +533,7 @@ Token evalExpression(Token *otokens, int n) {
 	checkOperators(tokens, n, &operands, &num_operands,
 			&operators, &num_operators);
 
-	/*for(int i = 0; i < num_operands; i++)
-		printToken(operands[i]);
-	for(int i = 0; i < num_operators; i++)
-		printToken(operators[i]);
-
-	exit(1);*/
+	/* we have operators in rpn, apply operations */
 
 	for(int i = 0; i < num_operators; i++) {
 		operands[0] = doOp(operands[0], operands[1], operators[i].val.cs);
@@ -432,10 +553,28 @@ Token evalExpression(Token *otokens, int n) {
 }
 
 void runLine(Program *p, Token *tokens, int n) {
+	if(tokens[0].type == SYMBOL) {
+		assert(n >= 3);
+		assert(tokens[1].type == KEYWORD);
+		assert(strcmp(tokens[1].val.cs, "=") == 0);
+
+		Token t = evalExpression(p, tokens+2, n-2);
+		if(tokens[0].val.s[strlen(tokens[0].val.s)-1] == '$') {
+			assert(t.type == STRING);
+			setStringVariable(p, tokens[0].val.s, t.val.s);
+		}
+		else {
+			assert(t.type == INTEGER);
+			setIntegerVariable(p, tokens[0].val.s, t.val.i);
+		}
+		return;
+	}
+
 	assert(tokens[0].type == KEYWORD);
-	Token t = evalExpression(tokens+1, n-1);
+	Token t = evalExpression(p, tokens+1, n-1);
 	if(strcmp(tokens[0].val.cs, "PRINT") == 0)
 		printToken(t);
+	printf("\n");
 }
 
 void runProgram(Program *p) {
@@ -449,7 +588,8 @@ void runProgram(Program *p) {
 int main() {
 	Program *p = newProgram();
 	/*loadFile(p, "test.bas");*/
-	loadString(p, "print 30 = 10 * (5 - 2)");
+	/*loadString(p, "i = 30\nprint i = 10 * (5 - 2)");*/
+	loadString(p, "msg$ = \"hello world\"\nprint msg$\nprint msg$+0");
 	printProgram(p);
 	runProgram(p);
 	freeProgram(p);
