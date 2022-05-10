@@ -661,7 +661,8 @@ void runLine(Program *p, Token *tokens, int n) {
 		else {
 			tokens += found+1;
 			n -= found+1;
-			multi -= found+1;
+			if(multi)
+				multi -= found+1;
 		}
 	}
 
