@@ -81,15 +81,19 @@ void addToken(Program *p, Token t) {
 			}
 		}
 
-		/*bool is_i = t.type != KEYWORD;
-		for(char *c = t.val.s; *c != 0 && is_i; c++)
+		bool is_i = t.type != KEYWORD;
+		int n = 0;
+		for(char *c = t.val.s; *c != 0 && is_i; c++) {
 			if(*c <  '0' || *c > '9')
 				is_i = false;
+			else
+				n = n*10 + *c - '0';
+		}
 		if(is_i) {
-			t.val.i = atoi(t.val.s);
 			free(t.val.s);
+			t.val.i = n;
 			t.type = INTEGER;
-		}*/
+		}
 	}
 
 	p->tokens[p->num_tokens-1] = t;
@@ -344,7 +348,7 @@ Token evalExpression(Token *otokens, int n) {
 	checkOperators(tokens, n, &operands, &num_operands, &operators, &num_operators);
 
 	for(int i = 0; i < num_operands; i++)
-		printf("%s ", operands[i].val.s);
+		printf("%d ", operands[i].val.i);
 	for(int i = 0; i < num_operators; i++)
 		printf("%s ", operators[i].val.cs);
 
