@@ -11,6 +11,7 @@ enum {
 	INTEGER,
 	COLON,
 	COMMA,
+	LABEL,
 };
 
 const char *keywords[] = {
@@ -32,6 +33,7 @@ const char *keywords[] = {
 	"PRINT",
 	"INPUT",
 	"TO",
+	"REM",
 	0,
 };
 
@@ -65,6 +67,8 @@ typedef struct program {
 	int num_integers;
 	Variable *strings;
 	int num_strings;
+	Variable *labels;
+	int num_labels;
 	char *blank;
 	char *last;
 	int line;
@@ -133,6 +137,11 @@ void addToken(Program *p, Token t) {
 			free(t.val.s);
 			t.type = COMMA;
 		}
+		/* label */
+		else if(t.val.s[strlen(t.val.s)-1] == ':') {
+			t.val.s[strlen(t.val.s)-1] = 0;
+			t.type = LABEL;
+		}
 	}
 
 	p->tokens[p->num_tokens-1] = t;
@@ -140,7 +149,7 @@ void addToken(Program *p, Token t) {
 
 Program *newProgram() {
 	Program *p = malloc(sizeof(Program));
-	*p = (Program){0, 0, 0, 0, 0, 0, 0};
+	*p = (Program){0, 0, 0, 0, 0, 0, 0, 0, 0};
 	p->blank = malloc(1);
 	p->blank[0] = 0;
 	p->last = 0;
@@ -158,6 +167,9 @@ void freeToken(Token t) {
 
 void freeProgram(Program *p) {
 	free(p->forLoops);
+
+	if(p->labels)
+		free(p->labels);
 
 	if(p->blank)
 		free(p->blank);
@@ -180,6 +192,24 @@ void freeProgram(Program *p) {
 		free(p->integers);
 
 	free(p);
+}
+
+void syntaxError(Program *p) {
+	printf("SYNTAX ERROR AT LINE %d\n", p->line);
+	freeProgram(p);
+	exit(1);
+}
+
+void syntaxAssert(Program *p, bool cond) {
+	if(!cond)
+		syntaxError(p);
+}
+
+int lineLength(Program *p, int d) {
+	for(int i = d; i < p->num_tokens; i++)
+		if(p->tokens[i].type == NEWLINE)
+			return (i-d);
+	return (p->num_tokens-d);
 }
 
 void setStringVariable(Program *p, char *identifier, char *s) {
@@ -228,6 +258,21 @@ int getIntegerVariable(Program *p, char *identifier) {
 	return 0;
 }
 
+void addLabel(Program *p, char *s, int line) {
+	p->labels = realloc(p->labels, sizeof(Variable)*(++(p->num_labels)));
+	Variable v;
+	v.identifier = s;
+	v.val.i = line;
+	p->labels[p->num_labels-1] = v;
+}
+
+int getLabelLine(Program *p, char *s) {
+	for(int i = 0; i < p->num_labels; i++)
+		if(strcmp(p->labels[i].identifier, s) == 0)
+			return p->labels[i].val.i;
+	syntaxError(p);
+}
+
 void loadString(Program *p, char *text) {
 	int max = 20;
 	char *s = malloc(max);
@@ -236,7 +281,7 @@ void loadString(Program *p, char *text) {
 	Token t;
 	bool quote = false;
 
-	const char *schars = "+-/*(),:";
+	const char *schars = "+-/*(),";
 
 	for(char *c = text; *c; c++) {
 		if(*c == '\n') {
@@ -322,6 +367,17 @@ void loadString(Program *p, char *text) {
 	}
 
 	free(s);
+
+	/* collect labels */
+
+	int line = 0;
+	for(int i = 0; i < p->num_tokens; i++) {
+		line++;
+		if(p->tokens[i].type == LABEL)
+			addLabel(p, p->tokens[i].val.s, line);
+		int l = lineLength(p, i);
+		i += l;
+	}
 }
 
 char *getString() {
@@ -375,13 +431,16 @@ void printDebug(Token t) {
 		printf("%s ", t.val.s);
 		break;
 	case KEYWORD:
-		printf("%s ", t.val.cs);
+		printf("[%s] ", t.val.cs);
 		break;
 	case INTEGER:
 		printf("%d ", t.val.i);
 		break;
 	case COLON:
 		printf(": ");
+		break;
+	case LABEL:
+		printf("%s: ", t.val.s);
 		break;
 	case COMMA:
 		printf(", ");
@@ -408,24 +467,6 @@ void printProgram(Program *p) {
 		printDebug(p->tokens[i]);
 	}
 	printf("\n");
-}
-
-void syntaxError(Program *p) {
-	printf("SYNTAX ERROR AT LINE %d\n", p->line);
-	freeProgram(p);
-	exit(1);
-}
-
-void syntaxAssert(Program *p, bool cond) {
-	if(!cond)
-		syntaxError(p);
-}
-
-int lineLength(Program *p, int d) {
-	for(int i = d; i < p->num_tokens; i++)
-		if(p->tokens[i].type == NEWLINE)
-			return (i-d);
-	return (p->num_tokens-d);
 }
 
 void checkOperator(Token *tokens, int n, const char *s,
@@ -645,7 +686,7 @@ void pushForLoop(Program *p, ForLoop l) {
 
 /* returns 1 to jump to another line */
 int runLine(Program *p, Token *tokens, int n) {
-	if(tokens[0].type == KEYWORD)
+	if(tokens[0].type == KEYWORD) {
 		if(strcmp(tokens[0].val.cs, "ELSE") == 0) {
 			syntaxAssert(p, p->do_else != -1);
 			if(p->do_else) {
@@ -655,6 +696,9 @@ int runLine(Program *p, Token *tokens, int n) {
 			else
 				return 0;
 		}
+		else if(strcmp(tokens[0].val.cs, "REM") == 0)
+			return 0;
+	}
 
 	/* multiple statements on one line */
 	int multi = 0;
@@ -717,8 +761,12 @@ int runLine(Program *p, Token *tokens, int n) {
 		return 0;
 	}
 
-	if(tokens[0].type != KEYWORD)
-		syntaxError(p);
+	if(tokens[0].type == LABEL) {
+		syntaxAssert(p, n == 1);
+		return 0;
+	}
+
+	syntaxAssert(p, tokens[0].type == KEYWORD);
 
 	/* keywords */
 
@@ -827,8 +875,16 @@ int runLine(Program *p, Token *tokens, int n) {
 		if(!g) {
 			pushForLoop(p, f);
 			p->line = f.line;
+			if(p->last)
+				free(p->last);
 			return 1;
 		}
+	}
+	else if(strcmp(tokens[0].val.s, "GOTO") == 0) {
+		syntaxAssert(p, n == 2);
+		syntaxAssert(p, tokens[1].type == SYMBOL);
+		p->line = getLabelLine(p, tokens[1].val.s);
+		return 1;
 	}
 
 	/* skip this for if false */
