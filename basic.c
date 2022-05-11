@@ -31,6 +31,7 @@ const char *keywords[] = {
 	"RETURN",
 	"PRINT",
 	"INPUT",
+	"TO",
 	0,
 };
 
@@ -51,6 +52,12 @@ typedef struct variable {
 	} val;
 } Variable;
 
+typedef struct forLoop {
+	int i1, i2;
+	char *s;
+	int line;
+} ForLoop;
+
 typedef struct program {
 	Token *tokens;
 	int num_tokens;
@@ -62,6 +69,9 @@ typedef struct program {
 	char *last;
 	int line;
 	int do_else;
+	ForLoop *forLoops;
+	int num_forLoops;
+	int max_forLoops;
 } Program;
 
 char *addChar(char *s, int *len, int *max, char c) {
@@ -135,6 +145,9 @@ Program *newProgram() {
 	p->blank[0] = 0;
 	p->last = 0;
 	p->do_else = -1;
+	p->max_forLoops = 20;
+	p->forLoops = malloc(p->max_forLoops*sizeof(ForLoop));
+	p->num_forLoops = 0;
 	return p;
 }
 
@@ -144,6 +157,8 @@ void freeToken(Token t) {
 }
 
 void freeProgram(Program *p) {
+	free(p->forLoops);
+
 	if(p->blank)
 		free(p->blank);
 
@@ -198,7 +213,8 @@ void setIntegerVariable(Program *p, char *identifier, int d) {
 			return;
 		}
 
-	p->integers = realloc(p->integers, sizeof(Variable)*(++(p->num_integers)));
+	p->integers = realloc(p->integers, sizeof(Variable)*
+			(++(p->num_integers)));
 	Variable *v = &p->integers[p->num_integers-1];
 	v->identifier = malloc(strlen(identifier)+1);
 	strcpy(v->identifier, identifier);
@@ -296,6 +312,12 @@ void loadString(Program *p, char *text) {
 	if(len) {
 		t.val.s = s;
 		t.type = SYMBOL;
+		addToken(p, t);
+	}
+
+	if(p->tokens[p->num_tokens-1].type != NEWLINE) {
+		Token t;
+		t.type = NEWLINE;
 		addToken(p, t);
 	}
 
@@ -608,7 +630,21 @@ Token evalExpression(Program *p, Token *otokens, int n) {
 	return r;
 }
 
-void runLine(Program *p, Token *tokens, int n) {
+ForLoop popForLoop(Program *p) {
+	return p->forLoops[--(p->num_forLoops)];
+}
+
+void pushForLoop(Program *p, ForLoop l) {
+	p->forLoops[p->num_forLoops++] = l;
+	if(p->num_forLoops > p->max_forLoops-10) {
+		p->max_forLoops += 20;
+		p->forLoops = realloc(p->forLoops,
+				p->max_forLoops*sizeof(ForLoop));
+	}
+}
+
+/* returns 1 to jump to another line */
+int runLine(Program *p, Token *tokens, int n) {
 	if(tokens[0].type == KEYWORD)
 		if(strcmp(tokens[0].val.cs, "ELSE") == 0) {
 			syntaxAssert(p, p->do_else != -1);
@@ -617,7 +653,7 @@ void runLine(Program *p, Token *tokens, int n) {
 				n--;
 			}
 			else
-				return;
+				return 0;
 		}
 
 	/* multiple statements on one line */
@@ -652,7 +688,8 @@ void runLine(Program *p, Token *tokens, int n) {
 		if(tokens[2].type == KEYWORD)
 			if(strcmp(tokens[2].val.cs, "INPUT") == 0) {
 				if(n > 3) {
-					printToken(evalExpression(p, tokens+3, n-3));
+					printToken(evalExpression(p, tokens+3,
+								n-3));
 					printf("\n");
 				}
 
@@ -677,11 +714,13 @@ void runLine(Program *p, Token *tokens, int n) {
 		}
 		if(multi)
 			runLine(p, tokens+multi, mn);
-		return;
+		return 0;
 	}
 
 	if(tokens[0].type != KEYWORD)
 		syntaxError(p);
+
+	/* keywords */
 
 	if(strcmp(tokens[0].val.cs, "IF") == 0) {
 		int found = 0;
@@ -702,7 +741,7 @@ void runLine(Program *p, Token *tokens, int n) {
 			}
 			p->do_else = 1;
 
-			return;
+			return 0;
 		}
 		else {
 			p->do_else = 0;
@@ -737,6 +776,60 @@ void runLine(Program *p, Token *tokens, int n) {
 		free(getString());
 		p->last = 0;
 	}
+	else if(strcmp(tokens[0].val.cs, "FOR") == 0) {
+		syntaxAssert(p, n >= 6);
+
+		int found = 0;
+		for(int i = 0; i < n && !found; i++)
+			if(tokens[i].type == KEYWORD)
+				if(strcmp(tokens[i].val.cs, "TO") == 0)
+					found = i;
+		if(!found) {
+			printf("EXPECT TO AFTER FOR\n");
+			syntaxError(p);
+		}
+
+		syntaxAssert(p, tokens[1].type == SYMBOL);
+		syntaxAssert(p, tokens[1].val.s[strlen(tokens[1].val.s)-1]
+				!= '$');
+		syntaxAssert(p, tokens[2].type == KEYWORD);
+		syntaxAssert(p, strcmp(tokens[2].val.cs, "=") == 0);
+
+		Token t1 = evalExpression(p, tokens+3, found-3);
+		Token t2 = evalExpression(p, tokens+found+1, n-found-1);
+		syntaxAssert(p, t1.type == INTEGER && t2.type == INTEGER);
+
+		ForLoop f = (ForLoop) {
+			t1.val.i, t2.val.i, tokens[1].val.s, p->line,
+		};
+		pushForLoop(p, f);
+
+		setIntegerVariable(p, tokens[1].val.s, t1.val.i);
+	}
+	else if(strcmp(tokens[0].val.cs, "NEXT") == 0) {
+		syntaxAssert(p, n == 1);
+		ForLoop f = popForLoop(p);
+
+		int i = getIntegerVariable(p, f.s);
+		bool g = false;
+		if(f.i1 < f.i2) {
+			i++;
+			if(i > f.i2)
+				g = true;
+		}
+		else if(f.i1 > f.i2) {
+			i--;
+			if(i < f.i2)
+				g = true;
+		}
+		setIntegerVariable(p, f.s, i);
+
+		if(!g) {
+			pushForLoop(p, f);
+			p->line = f.line;
+			return 1;
+		}
+	}
 
 	/* skip this for if false */
 	if(p->last) {
@@ -745,12 +838,14 @@ void runLine(Program *p, Token *tokens, int n) {
 	}
 	if(multi)
 		runLine(p, tokens+multi, mn);
+
+	return 0;
 }
 
 void runProgram(Program *p) {
 	p->line = 0;
 	for(int i = 0; i < p->num_tokens; i++) {
-		p->line += 1;
+		p->line++;
 		int l = lineLength(p, i);
 
 		if(p->tokens[i].type == KEYWORD) {
@@ -761,8 +856,17 @@ void runProgram(Program *p) {
 		else
 			p->do_else = -1;
 
-		runLine(p, p->tokens+i, l);
-		i += l;
+		if(runLine(p, p->tokens+i, l) == 0)
+			i += l;
+		else {
+			int line = 0;
+			for(i = 0; i < p->num_tokens && line < p->line; i++) {
+				line++;
+				int l = lineLength(p, i);
+				i += l;
+			}
+			i--;
+		}
 	}
 }
 
