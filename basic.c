@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
-#include <assert.h>
 
 enum {
 	STRING,
@@ -28,6 +27,7 @@ const char *keywords[] = {
 	"+",
 	"-",
 	"GOSUB",
+	"GOTO",
 	"RETURN",
 	"PRINT",
 	"INPUT",
@@ -61,7 +61,7 @@ typedef struct program {
 	char *blank;
 	char *last;
 	int line;
-	bool do_else;
+	int do_else;
 } Program;
 
 char *addChar(char *s, int *len, int *max, char c) {
@@ -77,6 +77,7 @@ char *addChar(char *s, int *len, int *max, char c) {
 void addToken(Program *p, Token t) {
 	p->tokens = realloc(p->tokens, (++(p->num_tokens))*sizeof(Token));
 
+	/* don't touch strings >:( */
 	if(t.type == STRING || t.type == SYMBOL) {
 		char *s = malloc(strlen(t.val.s)+1);
 		strcpy(s, t.val.s);
@@ -84,10 +85,12 @@ void addToken(Program *p, Token t) {
 	}
 
 	if(t.type == SYMBOL) {
+		/* all caps for non-strings */
 		for(char *c = t.val.s; *c; c++)
 			if(*c >= 'a' && *c <= 'z')
 				*c -= 'a' - 'A';
 
+		/* check if string is a keyword */
 		for(const char **kw = keywords; *kw; kw++) {
 			if(strcmp(t.val.s, *kw) == 0) {
 				free(t.val.s);
@@ -97,6 +100,7 @@ void addToken(Program *p, Token t) {
 			}
 		}
 
+		/* convert integers */
 		bool is_i = t.type != KEYWORD;
 		int n = 0;
 		for(char *c = t.val.s; *c != 0 && is_i; c++) {
@@ -110,6 +114,7 @@ void addToken(Program *p, Token t) {
 			t.val.i = n;
 			t.type = INTEGER;
 		}
+		/* seperators */
 		else if(strcmp(t.val.s, ":") == 0) {
 			free(t.val.s);
 			t.type = COLON;
@@ -129,7 +134,7 @@ Program *newProgram() {
 	p->blank = malloc(1);
 	p->blank[0] = 0;
 	p->last = 0;
-	p->do_else = false;
+	p->do_else = -1;
 	return p;
 }
 
@@ -313,7 +318,11 @@ char *getString() {
 
 void loadFile(Program *p, const char *filename) {
 	FILE *fp = fopen(filename, "r");
-	assert(fp != NULL);
+	if(!fp) {
+		printf("failed to open %s\n", filename);
+		freeProgram(p);
+		exit(1);
+	}
 
 	int len = 0;
 	int max = 200;
@@ -602,6 +611,7 @@ Token evalExpression(Program *p, Token *otokens, int n) {
 void runLine(Program *p, Token *tokens, int n) {
 	if(tokens[0].type == KEYWORD)
 		if(strcmp(tokens[0].val.cs, "ELSE") == 0) {
+			syntaxAssert(p, p->do_else != -1);
 			if(p->do_else) {
 				tokens++;
 				n--;
@@ -690,12 +700,12 @@ void runLine(Program *p, Token *tokens, int n) {
 				free(p->last);
 				p->last = 0;
 			}
-			p->do_else = true;
+			p->do_else = 1;
 
 			return;
 		}
 		else {
-			p->do_else = false;
+			p->do_else = 0;
 
 			tokens += found+1;
 			n -= found+1;
@@ -742,15 +752,34 @@ void runProgram(Program *p) {
 	for(int i = 0; i < p->num_tokens; i++) {
 		p->line += 1;
 		int l = lineLength(p, i);
+
+		if(p->tokens[i].type == KEYWORD) {
+			if(strcmp(p->tokens[i].val.cs, "IF") != 0 &&
+					strcmp(p->tokens[i].val.cs, "ELSE"))
+				p->do_else = -1;
+		}
+		else
+			p->do_else = -1;
+
 		runLine(p, p->tokens+i, l);
 		i += l;
 	}
 }
 
-int main() {
+int main(int argc, char **args) {
+	if(argc <= 1) {
+		printf("BASIC Interpreter - tdwsl 2022\n");
+		printf("usage: %s <file>\n", args[0]);
+		return 0;
+	}
+	if(argc > 2) {
+		printf("too many arguments\n");
+		return 1;
+	}
+
 	Program *p = newProgram();
-	loadFile(p, "test1.bas");
-	//printProgram(p);
+	loadFile(p, args[1]);
+	/*printProgram(p);*/
 	runProgram(p);
 	freeProgram(p);
 	return 0;
