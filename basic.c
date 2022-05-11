@@ -17,7 +17,7 @@ enum {
 const char *keywords[] = {
 	"IF",
 	"THEN",
-	"ELSE,",
+	"ELSE",
 	"FOR",
 	"NEXT",
 	"=",
@@ -61,6 +61,7 @@ typedef struct program {
 	char *blank;
 	char *last;
 	int line;
+	bool do_else;
 } Program;
 
 char *addChar(char *s, int *len, int *max, char c) {
@@ -128,6 +129,7 @@ Program *newProgram() {
 	p->blank = malloc(1);
 	p->blank[0] = 0;
 	p->last = 0;
+	p->do_else = false;
 	return p;
 }
 
@@ -598,6 +600,16 @@ Token evalExpression(Program *p, Token *otokens, int n) {
 }
 
 void runLine(Program *p, Token *tokens, int n) {
+	if(tokens[0].type == KEYWORD)
+		if(strcmp(tokens[0].val.cs, "ELSE") == 0) {
+			if(p->do_else) {
+				tokens++;
+				n--;
+			}
+			else
+				return;
+		}
+
 	/* multiple statements on one line */
 	int multi = 0;
 	int mn;
@@ -629,8 +641,10 @@ void runLine(Program *p, Token *tokens, int n) {
 		t.type = SYMBOL;
 		if(tokens[2].type == KEYWORD)
 			if(strcmp(tokens[2].val.cs, "INPUT") == 0) {
-				if(n > 3)
+				if(n > 3) {
 					printToken(evalExpression(p, tokens+3, n-3));
+					printf("\n");
+				}
 
 				t.val.s = getString();
 				t.type = STRING;
@@ -676,9 +690,13 @@ void runLine(Program *p, Token *tokens, int n) {
 				free(p->last);
 				p->last = 0;
 			}
+			p->do_else = true;
+
 			return;
 		}
 		else {
+			p->do_else = false;
+
 			tokens += found+1;
 			n -= found+1;
 			if(multi)
@@ -701,8 +719,11 @@ void runLine(Program *p, Token *tokens, int n) {
 		printf("\n");
 	}
 	else if(strcmp(tokens[0].val.cs, "INPUT") == 0) {
-		Token t = evalExpression(p, tokens+1, n-1);
-		printToken(t);
+		if(n > 1) {
+			Token t = evalExpression(p, tokens+1, n-1);
+			printToken(t);
+			printf("\n");
+		}
 		free(getString());
 		p->last = 0;
 	}
@@ -728,13 +749,8 @@ void runProgram(Program *p) {
 
 int main() {
 	Program *p = newProgram();
-	loadFile(p, "test.bas");
-	//loadString(p, "print 1,2,4");
-	/*loadString(p, "i = 30\nprint i = 10 * (5 - 2)");*/
-	//loadString(p, "msg$ = \"hello world\" : print msg$\nprint msg$+0");
-	//loadString(p, "print \"Hello\" : print \"world\"");
-	//loadString(p, "print \"Hello world\"");
-	printProgram(p);
+	loadFile(p, "test1.bas");
+	//printProgram(p);
 	runProgram(p);
 	freeProgram(p);
 	return 0;
