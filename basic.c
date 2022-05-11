@@ -60,6 +60,7 @@ typedef struct program {
 	int num_strings;
 	char *blank;
 	char *last;
+	int line;
 } Program;
 
 char *addChar(char *s, int *len, int *max, char c) {
@@ -136,7 +137,8 @@ void freeToken(Token t) {
 }
 
 void freeProgram(Program *p) {
-	free(p->blank);
+	if(p->blank)
+		free(p->blank);
 
 	for(int i = 0; i < p->num_tokens; i++)
 		freeToken(p->tokens[i]);
@@ -375,6 +377,17 @@ void printProgram(Program *p) {
 	printf("\n");
 }
 
+void syntaxError(Program *p) {
+	printf("SYNTAX ERROR AT LINE %d\n", p->line);
+	freeProgram(p);
+	exit(1);
+}
+
+void syntaxAssert(Program *p, bool cond) {
+	if(!cond)
+		syntaxError(p);
+}
+
 int lineLength(Program *p, int d) {
 	for(int i = d; i < p->num_tokens; i++)
 		if(p->tokens[i].type == NEWLINE)
@@ -445,12 +458,12 @@ void checkOperators(Token *tokens, int n,
 			operators, num_operators);
 }
 
-Token doOp(Token t1, Token t2, const char *s) {
+Token doOp(Program *p, Token t1, Token t2, const char *s) {
 	Token t;
 	t.type = INTEGER;
 
-	assert(t1.type == INTEGER || t1.type == STRING);
-	assert(t2.type == INTEGER || t2.type == STRING);
+	syntaxAssert(p, t1.type == INTEGER || t1.type == STRING);
+	syntaxAssert(p, t2.type == INTEGER || t2.type == STRING);
 
 	if(strcmp(s, "=") == 0) {
 		if(t1.type == STRING && t2.type == INTEGER) {
@@ -479,7 +492,7 @@ Token doOp(Token t1, Token t2, const char *s) {
 		t2.val.i = strlen(t2.val.s);
 	}
 
-	assert(t1.type == INTEGER && t2.type == INTEGER);
+	syntaxAssert(p, t1.type == INTEGER && t2.type == INTEGER);
 
 	if(strcmp(s, "+") == 0)
 		t.val.i = t1.val.i + t2.val.i;
@@ -490,9 +503,8 @@ Token doOp(Token t1, Token t2, const char *s) {
 	else if(strcmp(s, "*") == 0)
 		t.val.i = t1.val.i * t2.val.i;
 	else {
-		t.val.i = 0;
 		printf("UNKNOWN OPERATOR\n");
-		exit(1);
+		syntaxError(p);
 	}
 
 	return t;
@@ -568,7 +580,7 @@ Token evalExpression(Program *p, Token *otokens, int n) {
 	/* we have operators in rpn, apply operations */
 
 	for(int i = 0; i < num_operators; i++) {
-		operands[0] = doOp(operands[0], operands[1],
+		operands[0] = doOp(p, operands[0], operands[1],
 				operators[i].val.cs);
 		num_operands--;
 		for(int j = 1; j < num_operands; j++)
@@ -600,11 +612,18 @@ void runLine(Program *p, Token *tokens, int n) {
 		multi++;
 	}
 
+	int inp = 0;
+	for(int i = 0; i < n; i++)
+		if(tokens[i].type == KEYWORD)
+			if(strcmp(tokens[i].val.cs, "INPUT") == 0)
+				if(inp++)
+					syntaxError(p);
+
 	/* variable assignments */
 	if(tokens[0].type == SYMBOL) {
-		assert(n >= 3);
-		assert(tokens[1].type == KEYWORD);
-		assert(strcmp(tokens[1].val.cs, "=") == 0);
+		syntaxAssert(p, n >= 3);
+		syntaxAssert(p, tokens[1].type == KEYWORD);
+		syntaxAssert(p, strcmp(tokens[1].val.cs, "=") == 0);
 
 		Token t;
 		t.type = SYMBOL;
@@ -620,11 +639,11 @@ void runLine(Program *p, Token *tokens, int n) {
 			t = evalExpression(p, tokens+2, n-2);
 
 		if(tokens[0].val.s[strlen(tokens[0].val.s)-1] == '$') {
-			assert(t.type == STRING);
+			syntaxAssert(p, t.type == STRING);
 			setStringVariable(p, tokens[0].val.s, t.val.s);
 		}
 		else {
-			assert(t.type == INTEGER);
+			syntaxAssert(p, t.type == INTEGER);
 			setIntegerVariable(p, tokens[0].val.s, t.val.i);
 		}
 
@@ -637,7 +656,8 @@ void runLine(Program *p, Token *tokens, int n) {
 		return;
 	}
 
-	assert(tokens[0].type == KEYWORD);
+	if(tokens[0].type != KEYWORD)
+		syntaxError(p);
 
 	if(strcmp(tokens[0].val.cs, "IF") == 0) {
 		int found = 0;
@@ -647,10 +667,10 @@ void runLine(Program *p, Token *tokens, int n) {
 					found = i;
 		if(!found) {
 			printf("EXPECT THEN AFTER IF\n");
-			exit(1);
+			syntaxError(p);
 		}
 		Token t = evalExpression(p, tokens+1, found-1);
-		assert(t.type == INTEGER);
+		syntaxAssert(p, t.type == INTEGER);
 		if(t.val.i == 0) {
 			if(p->last) {
 				free(p->last);
@@ -697,7 +717,9 @@ void runLine(Program *p, Token *tokens, int n) {
 }
 
 void runProgram(Program *p) {
+	p->line = 0;
 	for(int i = 0; i < p->num_tokens; i++) {
+		p->line += 1;
 		int l = lineLength(p, i);
 		runLine(p, p->tokens+i, l);
 		i += l;
