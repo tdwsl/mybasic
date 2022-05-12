@@ -76,6 +76,9 @@ typedef struct program {
 	ForLoop *forLoops;
 	int num_forLoops;
 	int max_forLoops;
+	int *returnLines;
+	int num_returnLines;
+	int max_returnLines;
 } Program;
 
 char *addChar(char *s, int *len, int *max, char c) {
@@ -149,7 +152,7 @@ void addToken(Program *p, Token t) {
 
 Program *newProgram() {
 	Program *p = malloc(sizeof(Program));
-	*p = (Program){0, 0, 0, 0, 0, 0, 0, 0, 0};
+	*p = (Program){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 	p->blank = malloc(1);
 	p->blank[0] = 0;
 	p->last = 0;
@@ -157,16 +160,20 @@ Program *newProgram() {
 	p->max_forLoops = 20;
 	p->forLoops = malloc(p->max_forLoops*sizeof(ForLoop));
 	p->num_forLoops = 0;
+	p->max_returnLines = 20;
+	p->returnLines = malloc(p->max_returnLines*sizeof(int));
+	p->num_returnLines = 0;
 	return p;
 }
 
 void freeToken(Token t) {
-	if(t.type == STRING || t.type == SYMBOL)
+	if(t.type == STRING || t.type == SYMBOL || t.type == LABEL)
 		free(t.val.s);
 }
 
 void freeProgram(Program *p) {
 	free(p->forLoops);
+	free(p->returnLines);
 
 	if(p->labels)
 		free(p->labels);
@@ -671,10 +678,6 @@ Token evalExpression(Program *p, Token *otokens, int n) {
 	return r;
 }
 
-ForLoop popForLoop(Program *p) {
-	return p->forLoops[--(p->num_forLoops)];
-}
-
 void pushForLoop(Program *p, ForLoop l) {
 	p->forLoops[p->num_forLoops++] = l;
 	if(p->num_forLoops > p->max_forLoops-10) {
@@ -682,6 +685,25 @@ void pushForLoop(Program *p, ForLoop l) {
 		p->forLoops = realloc(p->forLoops,
 				p->max_forLoops*sizeof(ForLoop));
 	}
+}
+
+ForLoop popForLoop(Program *p) {
+	syntaxAssert(p, p->num_forLoops != 0);
+	return p->forLoops[--(p->num_forLoops)];
+}
+
+void pushReturnLine(Program *p, int line) {
+	p->returnLines[p->num_returnLines++] = line;
+	if(p->num_returnLines > p->max_returnLines-10) {
+		p->max_returnLines += 20;
+		p->returnLines = realloc(p->returnLines,
+				p->max_returnLines*sizeof(int));
+	}
+}
+
+int popReturnLine(Program *p) {
+	syntaxAssert(p, p->num_returnLines != 0);
+	return p->returnLines[--(p->num_returnLines)];
 }
 
 /* returns 1 to jump to another line */
@@ -884,6 +906,18 @@ int runLine(Program *p, Token *tokens, int n) {
 		syntaxAssert(p, n == 2);
 		syntaxAssert(p, tokens[1].type == SYMBOL);
 		p->line = getLabelLine(p, tokens[1].val.s);
+		return 1;
+	}
+	else if(strcmp(tokens[0].val.s, "GOSUB") == 0) {
+		syntaxAssert(p, n == 2);
+		syntaxAssert(p, tokens[1].type == SYMBOL);
+		pushReturnLine(p, p->line);
+		p->line = getLabelLine(p, tokens[1].val.s);
+		return 1;
+	}
+	else if(strcmp(tokens[0].val.s, "RETURN") == 0) {
+		syntaxAssert(p, n == 1);
+		p->line = popReturnLine(p);
 		return 1;
 	}
 
