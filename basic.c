@@ -34,6 +34,10 @@ const char *keywords[] = {
 	"INPUT",
 	"TO",
 	"REM",
+	"AND",
+	"OR",
+	"DIM",
+	"EXIT",
 	0,
 };
 
@@ -54,6 +58,12 @@ typedef struct variable {
 	} val;
 } Variable;
 
+typedef struct integerArray {
+	char *identifier;
+	int *integers;
+	int num_integers;
+} IntegerArray;
+
 typedef struct forLoop {
 	int i1, i2;
 	char *s;
@@ -63,12 +73,16 @@ typedef struct forLoop {
 typedef struct program {
 	Token *tokens;
 	int num_tokens;
+
 	Variable *integers;
 	int num_integers;
 	Variable *strings;
 	int num_strings;
 	Variable *labels;
 	int num_labels;
+	IntegerArray *integerArrays;
+	int num_integerArrays;
+
 	char *blank;
 	char *last;
 	int line;
@@ -152,7 +166,7 @@ void addToken(Program *p, Token t) {
 
 Program *newProgram() {
 	Program *p = malloc(sizeof(Program));
-	*p = (Program){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+	*p = (Program){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 	p->blank = malloc(1);
 	p->blank[0] = 0;
 	p->last = 0;
@@ -166,8 +180,8 @@ Program *newProgram() {
 	return p;
 }
 
-void freeToken(Token t) {
-	if(t.type == STRING || t.type == SYMBOL || t.type == LABEL)
+void freeToken(Token t) { /* something to do with gosub doesnt work... */
+	if(t.type == STRING || t.type == LABEL /*|| t.type == SYMBOL*/)
 		free(t.val.s);
 }
 
@@ -197,6 +211,13 @@ void freeProgram(Program *p) {
 		free(p->integers[i].identifier);
 	if(p->integers)
 		free(p->integers);
+
+	for(int i = 0; i < p->num_integerArrays; i++) {
+		free(p->integerArrays[i].identifier);
+		free(p->integerArrays[i].integers);
+	}
+	if(p->integerArrays)
+		free(p->integerArrays);
 
 	free(p);
 }
@@ -263,6 +284,56 @@ int getIntegerVariable(Program *p, char *identifier) {
 		if(strcmp(p->integers[i].identifier, identifier) == 0)
 			return p->integers[i].val.i;
 	return 0;
+}
+
+void dimIntegerArray(Program *p, char *identifier, int sz) {
+	for(int i = 0; i < p->num_integerArrays; i++) {
+		if(strcmp(p->integerArrays[i].identifier, identifier) == 0) {
+			IntegerArray *a = &p->integerArrays[i];
+			free(a->integers);
+			a->integers = malloc(sizeof(int)*sz);
+			a->num_integers = sz;
+			for(int j = 0; j < sz; j++)
+				a->integers[j] = 0;
+			return;
+		}
+	}
+
+	p->integerArrays = realloc(p->integerArrays,
+			sizeof(IntegerArray)*(++(p->num_integerArrays)));
+	IntegerArray *a = &p->integerArrays[p->num_integerArrays-1];
+	a->integers = malloc(sizeof(int)*sz);
+	a->num_integers = sz;
+	for(int i = 0; i < sz; i++)
+		a->integers[i] = 0;
+	a->identifier = malloc(strlen(identifier)+1);
+	strcpy(a->identifier, identifier);
+}
+
+int *pIntegerArrayVal(Program *p, char *identifier, int d) {
+	IntegerArray *a = 0;
+	for(int i = 0; i < p->num_integerArrays && !a; i++)
+		if(strcmp(p->integerArrays[i].identifier, identifier)
+				== 0)
+			a = &p->integerArrays[i];
+	if(!a) {
+		printf("COULD NOT FIND %s\n", identifier);
+		syntaxError(p);
+	}
+	if(d < 1 || d > a->num_integers) {
+		printf("INVALID ARRAY INDEX %d\n", d);
+		syntaxError(p);
+	}
+	return &a->integers[d-1];
+}
+
+void setIntegerArrayVal(Program *p, char *identifier, int d, int v) {
+	*pIntegerArrayVal(p, identifier, d) = v;
+}
+
+int getIntegerArrayVal(Program *p, char *identifier, int d) {
+	int n = *pIntegerArrayVal(p, identifier, d);
+	return n;
 }
 
 void addLabel(Program *p, char *s, int line) {
@@ -537,6 +608,10 @@ void checkOperators(Token *tokens, int n,
 			operators, num_operators);
 	checkOperator(tokens, n, "=", operands, num_operands,
 			operators, num_operators);
+	checkOperator(tokens, n, "AND", operands, num_operands,
+			operators, num_operators);
+	checkOperator(tokens, n, "OR", operands, num_operands,
+			operators, num_operators);
 }
 
 Token doOp(Program *p, Token t1, Token t2, const char *s) {
@@ -583,6 +658,10 @@ Token doOp(Program *p, Token t1, Token t2, const char *s) {
 		t.val.i = t1.val.i / t2.val.i;
 	else if(strcmp(s, "*") == 0)
 		t.val.i = t1.val.i * t2.val.i;
+	else if(strcmp(s, "AND") == 0)
+		t.val.i = t1.val.i & t2.val.i;
+	else if(strcmp(s, "OR") == 0)
+		t.val.i = t1.val.i | t2.val.i;
 	else {
 		printf("UNKNOWN OPERATOR\n");
 		syntaxError(p);
@@ -591,33 +670,14 @@ Token doOp(Program *p, Token t1, Token t2, const char *s) {
 	return t;
 }
 
-void getVariables(Program *p, Token *tokens, int n) {
-	for(int i = 0; i < n; i++)
-		if(tokens[i].type == SYMBOL) {
-			bool is_str = false;
-			if(tokens[i].val.s[0] != 0)
-				if(tokens[i].val.s[strlen(tokens[i].val.s)-1]
-						== '$')
-					is_str = true;
-			if(is_str) {
-				tokens[i].val.s = getStringVariable(p,
-						tokens[i].val.s);
-				tokens[i].type = STRING;
-			}
-			else {
-				tokens[i].val.i = getIntegerVariable(p,
-						tokens[i].val.s);
-				tokens[i].type = INTEGER;
-			}
-		}
-}
+Token *getVariables(Program *p, Token *tokens, int *n);
 
 Token evalExpression(Program *p, Token *otokens, int n) {
 	Token *tokens = malloc(sizeof(Token)*n);
 	for(int i = 0; i < n; i++)
 		tokens[i] = otokens[i];
 
-	getVariables(p, tokens, n);
+	tokens = getVariables(p, tokens, &n);
 
 	/* if only 1 part, return */
 	if(n == 1) {
@@ -668,6 +728,7 @@ Token evalExpression(Program *p, Token *otokens, int n) {
 			operands[j] = operands[j+1];
 	}
 
+	syntaxAssert(p, num_operands == 1);
 	Token r = operands[0];
 
 	free(bopen);
@@ -676,6 +737,62 @@ Token evalExpression(Program *p, Token *otokens, int n) {
 	free(operators);
 
 	return r;
+}
+
+Token *getVariables(Program *p, Token *tokens, int *n) {
+	Token *ntokens = 0;
+	int nn = 0;
+
+	for(int i = 0; i < *n; i++) {
+		Token t = tokens[i];
+
+		if(tokens[i].type == SYMBOL) {
+			bool is_arr = false;
+			if(i+1 < *n)
+			if(tokens[i+1].type == KEYWORD)
+			if(strcmp(tokens[i+1].val.cs, "(") == 0)
+				is_arr = true;
+
+			if(is_arr) {
+				int found = 0;
+				for(int j = i+1; j < *n && !found; j++)
+					if(tokens[j].type == KEYWORD)
+					if(strcmp(tokens[j].val.cs, ")") == 0)
+						found = j;
+				int sz = found-i-2;
+				syntaxAssert(p, sz > 0);
+				Token d = evalExpression(p, tokens+i+2, sz);
+				syntaxAssert(p, d.type == INTEGER);
+				t.type = INTEGER;
+				t.val.i = getIntegerArrayVal(p,
+						tokens[i].val.s, d.val.i);
+				i = found;
+			}
+			else {
+				bool is_str = false;
+				if(t.val.s[0] != 0)
+					if(t.val.s[strlen(t.val.s)-1]
+							== '$')
+						is_str = true;
+				if(is_str) {
+					t.val.s = getStringVariable(p,
+							t.val.s);
+					t.type = STRING;
+				}
+				else {
+					t.val.i = getIntegerVariable(p,
+							t.val.s);
+					t.type = INTEGER;
+				}
+			}
+		}
+		ntokens = realloc(ntokens, sizeof(Token)*(++nn));
+		ntokens[nn-1] = t;
+	}
+
+	free(tokens);
+	*n = nn;
+	return ntokens;
 }
 
 void pushForLoop(Program *p, ForLoop l) {
@@ -708,6 +825,9 @@ int popReturnLine(Program *p) {
 
 /* returns 1 to jump to another line */
 int runLine(Program *p, Token *tokens, int n) {
+	if(n <= 0)
+		return 0;
+
 	if(tokens[0].type == KEYWORD) {
 		if(strcmp(tokens[0].val.cs, "ELSE") == 0) {
 			syntaxAssert(p, p->do_else != -1);
@@ -747,6 +867,43 @@ int runLine(Program *p, Token *tokens, int n) {
 	if(tokens[0].type == SYMBOL) {
 		syntaxAssert(p, n >= 3);
 		syntaxAssert(p, tokens[1].type == KEYWORD);
+
+		/* array variable */
+		if(strcmp(tokens[1].val.cs, "(") == 0) {
+			int found = 0;
+			for(int i = 2; i < n && !found; i++)
+				if(tokens[i].type == KEYWORD)
+					if(strcmp(tokens[i].val.cs, ")")
+							== 0)
+						found = i;
+			if(!found) {
+				printf("EXPECTED CLOSING BRACE\n");
+				syntaxError(p);
+			}
+
+			syntaxAssert(p, tokens[found+1].type == KEYWORD);
+			syntaxAssert(p, strcmp(tokens[found+1].val.cs, "=")
+					== 0);
+
+			Token t1 = evalExpression(p, tokens+2, found-2);
+			Token t2 = evalExpression(p,
+					tokens+found+2, n-found-2);
+			syntaxAssert(p, t1.type == INTEGER
+					&& t2.type == INTEGER);
+
+			setIntegerArrayVal(p, tokens[0].val.s,
+					t1.val.i, t2.val.i);
+
+			if(p->last) {
+				free(p->last);
+				p->last = 0;
+			}
+			if(multi)
+				runLine(p, tokens+multi, mn);
+			return 0;
+		}
+
+		/* non-array variable */
 		syntaxAssert(p, strcmp(tokens[1].val.cs, "=") == 0);
 
 		Token t;
@@ -902,23 +1059,43 @@ int runLine(Program *p, Token *tokens, int n) {
 			return 1;
 		}
 	}
-	else if(strcmp(tokens[0].val.s, "GOTO") == 0) {
+	else if(strcmp(tokens[0].val.cs, "GOTO") == 0) {
 		syntaxAssert(p, n == 2);
 		syntaxAssert(p, tokens[1].type == SYMBOL);
 		p->line = getLabelLine(p, tokens[1].val.s);
 		return 1;
 	}
-	else if(strcmp(tokens[0].val.s, "GOSUB") == 0) {
+	else if(strcmp(tokens[0].val.cs, "GOSUB") == 0) {
 		syntaxAssert(p, n == 2);
 		syntaxAssert(p, tokens[1].type == SYMBOL);
 		pushReturnLine(p, p->line);
 		p->line = getLabelLine(p, tokens[1].val.s);
 		return 1;
 	}
-	else if(strcmp(tokens[0].val.s, "RETURN") == 0) {
+	else if(strcmp(tokens[0].val.cs, "RETURN") == 0) {
 		syntaxAssert(p, n == 1);
 		p->line = popReturnLine(p);
 		return 1;
+	}
+	else if(strcmp(tokens[0].val.cs, "DIM") == 0) {
+		syntaxAssert(p, n >= 5);
+		syntaxAssert(p, tokens[1].type == SYMBOL);
+		syntaxAssert(p, tokens[2].type == KEYWORD);
+		syntaxAssert(p, tokens[n-1].type == KEYWORD);
+		syntaxAssert(p, strcmp(tokens[2].val.s, "(") == 0);
+		syntaxAssert(p, strcmp(tokens[n-1].val.s, ")") == 0);
+		Token t = evalExpression(p, tokens+3, n-4);
+		syntaxAssert(p, t.type == INTEGER);
+		if(t.val.i <= 0) {
+			printf("ARRAY SIZE MUST BE > 0\n");
+			syntaxError(p);
+		}
+		dimIntegerArray(p, tokens[1].val.s, t.val.i);
+		return 0;
+	}
+	else if(strcmp(tokens[0].val.cs, "EXIT") == 0) {
+		freeProgram(p);
+		exit(0);
 	}
 
 	/* skip this for if false */
