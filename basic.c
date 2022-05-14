@@ -64,6 +64,12 @@ typedef struct integerArray {
 	int num_integers;
 } IntegerArray;
 
+typedef struct stringArray {
+	char *identifier;
+	char **strings;
+	int num_strings;
+} StringArray;
+
 typedef struct forLoop {
 	int i1, i2;
 	char *s;
@@ -82,6 +88,8 @@ typedef struct program {
 	int num_labels;
 	IntegerArray *integerArrays;
 	int num_integerArrays;
+	StringArray *stringArrays;
+	int num_stringArrays;
 
 	char *blank;
 	char *last;
@@ -166,7 +174,7 @@ void addToken(Program *p, Token t) {
 
 Program *newProgram() {
 	Program *p = malloc(sizeof(Program));
-	*p = (Program){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+	*p = (Program){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 	p->blank = malloc(1);
 	p->blank[0] = 0;
 	p->last = 0;
@@ -188,12 +196,6 @@ void freeToken(Token t) { /* something to do with gosub doesnt work... */
 void freeProgram(Program *p) {
 	free(p->forLoops);
 	free(p->returnLines);
-
-	if(p->labels)
-		free(p->labels);
-
-	if(p->blank)
-		free(p->blank);
 
 	for(int i = 0; i < p->num_tokens; i++)
 		freeToken(p->tokens[i]);
@@ -218,6 +220,20 @@ void freeProgram(Program *p) {
 	}
 	if(p->integerArrays)
 		free(p->integerArrays);
+
+	for(int i = 0; i < p->num_stringArrays; i++) {
+		for(int j = 0; j < p->stringArrays[i].num_strings; j++)
+			if(p->stringArrays[i].strings[j])
+				free(p->stringArrays[i].strings[j]);
+		free(p->stringArrays[i].strings);
+	}
+	if(p->stringArrays)
+		free(p->stringArrays);
+
+	if(p->labels)
+		free(p->labels);
+	if(p->blank)
+		free(p->blank);
 
 	free(p);
 }
@@ -334,6 +350,65 @@ void setIntegerArrayVal(Program *p, char *identifier, int d, int v) {
 int getIntegerArrayVal(Program *p, char *identifier, int d) {
 	int n = *pIntegerArrayVal(p, identifier, d);
 	return n;
+}
+
+void dimStringArray(Program *p, char *identifier, int sz) {
+	for(int i = 0; i < p->num_stringArrays; i++) {
+		if(strcmp(p->stringArrays[i].identifier, identifier) == 0) {
+			StringArray *a = &p->stringArrays[i];
+			for(int j = 0; j < a->num_strings; j++)
+				if(a->strings[j])
+					free(a->strings[i]);
+			free(a->strings);
+			a->strings = malloc(sizeof(char*)*sz);
+			a->num_strings = sz;
+			for(int j = 0; j < a->num_strings; j++)
+				a->strings[j] = 0;
+			return;
+		}
+	}
+
+	p->stringArrays = realloc(p->stringArrays,
+			sizeof(StringArray)*(++(p->num_stringArrays)));
+	StringArray *a = &p->stringArrays[p->num_stringArrays-1];
+	a->strings = malloc(sizeof(char*)*sz);
+	a->num_strings = sz;
+	for(int i = 0; i < a->num_strings; i++)
+		a->strings[i] = 0;
+
+	a->identifier = malloc(strlen(identifier)+1);
+	strcpy(a->identifier, identifier);
+}
+
+StringArray *pStringArray(Program *p, char *identifier) {
+	for(int i = 0; i < p->num_stringArrays; i++)
+		if(strcmp(p->stringArrays[i].identifier, identifier) == 0)
+			return &p->stringArrays[i];
+	printf("COULD NOT FIND %s\n", identifier);
+	syntaxError(p);
+}
+
+void setStringArrayVal(Program *p, char *identifier, int d, char *s) {
+	StringArray *a = pStringArray(p, identifier);
+	if(d < 1 || d > a->num_strings) {
+		printf("INVALID INDEX %d\n", d);
+		syntaxError(p);
+	}
+	if(a->strings[d-1])
+		free(a->strings[d-1]);
+	a->strings[d-1] = malloc(strlen(s)+1);
+	strcpy(a->strings[d-1], s);
+}
+
+char *getStringArrayVal(Program *p, char *identifier, int d) {
+	StringArray *a = pStringArray(p, identifier);
+	if(d < 1 || d > a->num_strings) {
+		printf("INVALID INDEX %d\n", d);
+		syntaxError(p);
+	}
+	if(!a->strings[d-1])
+		return p->blank;
+	return a->strings[d-1];
 }
 
 void addLabel(Program *p, char *s, int line) {
@@ -763,9 +838,20 @@ Token *getVariables(Program *p, Token *tokens, int *n) {
 				syntaxAssert(p, sz > 0);
 				Token d = evalExpression(p, tokens+i+2, sz);
 				syntaxAssert(p, d.type == INTEGER);
-				t.type = INTEGER;
-				t.val.i = getIntegerArrayVal(p,
-						tokens[i].val.s, d.val.i);
+
+				if(tokens[i].val.s[strlen(tokens[i].val.s)-1]
+						== '$') {
+					t.type = STRING;
+					t.val.s = getStringArrayVal(p,
+							tokens[i].val.s,
+							d.val.i);
+				}
+				else {
+					t.type = INTEGER;
+					t.val.i = getIntegerArrayVal(p,
+							tokens[i].val.s,
+							d.val.i);
+				}
 				i = found;
 			}
 			else {
@@ -888,11 +974,19 @@ int runLine(Program *p, Token *tokens, int n) {
 			Token t1 = evalExpression(p, tokens+2, found-2);
 			Token t2 = evalExpression(p,
 					tokens+found+2, n-found-2);
-			syntaxAssert(p, t1.type == INTEGER
-					&& t2.type == INTEGER);
+			syntaxAssert(p, t1.type == INTEGER);
 
-			setIntegerArrayVal(p, tokens[0].val.s,
-					t1.val.i, t2.val.i);
+			if(tokens[0].val.s[strlen(tokens[0].val.s)-1]
+					== '$') {
+				syntaxAssert(p, t2.type == STRING);
+				setStringArrayVal(p, tokens[0].val.s,
+						t1.val.i, t2.val.s);
+			}
+			else {
+				syntaxAssert(p, t2.type == INTEGER);
+				setIntegerArrayVal(p, tokens[0].val.s,
+						t1.val.i, t2.val.i);
+			}
 
 			if(p->last) {
 				free(p->last);
@@ -1090,7 +1184,11 @@ int runLine(Program *p, Token *tokens, int n) {
 			printf("ARRAY SIZE MUST BE > 0\n");
 			syntaxError(p);
 		}
-		dimIntegerArray(p, tokens[1].val.s, t.val.i);
+
+		if(tokens[1].val.s[strlen(tokens[1].val.s)-1] == '$')
+			dimStringArray(p, tokens[1].val.s, t.val.i);
+		else
+			dimIntegerArray(p, tokens[1].val.s, t.val.i);
 		return 0;
 	}
 	else if(strcmp(tokens[0].val.cs, "EXIT") == 0) {
