@@ -94,7 +94,7 @@ typedef struct program {
 	char *blank;
 	char *last;
 	int line;
-	int do_else;
+	bool do_else;
 	ForLoop *forLoops;
 	int num_forLoops;
 	int max_forLoops;
@@ -178,7 +178,7 @@ Program *newProgram() {
 	p->blank = malloc(1);
 	p->blank[0] = 0;
 	p->last = 0;
-	p->do_else = -1;
+	p->do_else = false;
 	p->max_forLoops = 20;
 	p->forLoops = malloc(p->max_forLoops*sizeof(ForLoop));
 	p->num_forLoops = 0;
@@ -916,7 +916,6 @@ int runLine(Program *p, Token *tokens, int n) {
 
 	if(tokens[0].type == KEYWORD) {
 		if(strcmp(tokens[0].val.cs, "ELSE") == 0) {
-			syntaxAssert(p, p->do_else != -1);
 			if(p->do_else) {
 				tokens++;
 				n--;
@@ -1060,12 +1059,12 @@ int runLine(Program *p, Token *tokens, int n) {
 				free(p->last);
 				p->last = 0;
 			}
-			p->do_else = 1;
+			p->do_else = true;
 
 			return 0;
 		}
 		else {
-			p->do_else = 0;
+			p->do_else = false;
 
 			tokens += found+1;
 			n -= found+1;
@@ -1212,14 +1211,6 @@ void runProgram(Program *p) {
 	for(int i = 0; i < p->num_tokens; i++) {
 		p->line++;
 		int l = lineLength(p, i);
-
-		if(p->tokens[i].type == KEYWORD) {
-			if(strcmp(p->tokens[i].val.cs, "IF") != 0 &&
-					strcmp(p->tokens[i].val.cs, "ELSE"))
-				p->do_else = -1;
-		}
-		else
-			p->do_else = -1;
 
 		if(runLine(p, p->tokens+i, l) == 0)
 			i += l;
